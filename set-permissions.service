@@ -1,14 +1,13 @@
 [Unit]
 Description=Applies POSIX permissions from config file
-After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3/path/to/set_POSIX_permissions.py 
+ExecStart=/Users/Downloads/Test_task/set-permissions.py /Users/Downloads/Test_task/config.ini
+User=root
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
-User=root  
 
 [Install]
 WantedBy=multi-user.target
