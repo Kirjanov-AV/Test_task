@@ -3,7 +3,7 @@ Description=Applies POSIX permissions from config file
 
 [Service]
 Type=oneshot
-ExecStart=/Users/Downloads/Test_task/set-permissions.py /Users/Downloads/Test_task/config.ini
+ExecStart=/etc/Test_task/set-permissions.py /etc/Test_task/config.ini
 User=root
 StandardOutput=journal
 StandardError=journal

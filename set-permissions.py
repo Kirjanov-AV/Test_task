@@ -4,12 +4,12 @@ import sys
 import logging
 import configparser
 
-CONFIG_FILE_PATH = "/Users/Downloads/Test_task/config.ini"
-LOG_FILE_PATH = "/Users/Downloads/Test_task.log"
+CONFIG_FILE_PATH = "/etc/Test_task/config.ini"
+LOG_FILE_PATH = "/var/log/Test_task/permissions_journal.log"
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE_PATH),
         logging.StreamHandler(sys.stdout)
@@ -21,70 +21,90 @@ def parse_permissions_string(perm_str):
     try:
         return int(perm_str, 8)
     except ValueError:
-        logging.error(f"Некорректный формат прав доступа '{perm_str}'. Ожидается восьмеричное число (например, '755').")
+        logging.exception(f"Некорректный формат прав доступа '{perm_str}'. Ожидается восьмеричное число (например, '755').")
         return None
 
 
-def apply_permissions_from_config(config_filepath):
+def read_config_file(config_filepath):
     config = configparser.ConfigParser()
-    overall_success = True
 
     if not os.path.exists(config_filepath):
         logging.critical(f"Конфигурационный файл не найден: {config_filepath}")
-        return False
+        return None
 
     try:
         config.read(config_filepath)
         logging.info(f"Конфигурационный файл '{config_filepath}' успешно прочитан.")
+        return config
     except configparser.Error as e:
-        logging.critical(f"Ошибка при разборе конфигурационного файла '{config_filepath}': {e}")
+        logging.exception(f"Ошибка при разборе конфигурационного файла '{config_filepath}': {e}")
+        return None
+    except Exception as e:
+        logging.exception(f"Неожиданная ошибка при чтении конфигурационного файла '{config_filepath}': {e}")
+        return None
+
+
+def apply_permission_to_path(path, permissions_str, parsed_permissions):
+    try:
+        os.chmod(path, parsed_permissions)
+        logging.info(f"Успешно применены права '{permissions_str}' к '{path}'")
+        return True
+    except FileNotFoundError:
+        logging.exception(f"Ошибка: Файл или папка не найдены по пути '{path}'. Права не применены.")
+        return False
+    except PermissionError:
+        logging.exception(f"Ошибка доступа: Недостаточно прав для изменения прав '{path}'. Могут потребоваться права root.")
+        return False
+    except OSError as e:
+        logging.exception(f"Ошибка ОС при изменении прав для '{path}': {e}")
         return False
     except Exception as e:
-        logging.critical(f"Неожиданная ошибка при чтении конфигурационного файла '{config_filepath}': {e}")
+        logging.exception(f"Неожиданная ошибка при применении прав для '{path}': {e}")
+        return False
+
+
+def process_config_section(section_name, config):
+    try:
+        path = config.get(section_name, 'path')
+        permissions_str = config.get(section_name, 'permissions')
+
+        parsed_permissions = parse_permissions_string(permissions_str)
+        if parsed_permissions is None:
+            return False
+        return apply_permission_to_path(path, permissions_str, parsed_permissions)
+    except configparser.NoOptionError as e:
+        logging.exception(f"Ошибка конфигурации в секции '{section_name}': Отсутствует обязательный параметр '{e.option}'.")
+        return False
+    except Exception as e:
+        logging.exception(f"Неожиданная ошибка при обработке секции '{section_name}': {e}")
+        return False
+
+
+def apply_permissions_from_config(config_filepath):
+    config = read_config_file(config_filepath)
+    if config is None:
         return False
 
     if not config.sections():
-        logging.warning("В конфигурационном файле не найдено ни одной секции.")
+        logging.warning("В конфигурационном файле не найдено ни одной секции для обработки.")
         return True
 
+    overall_success = True
     for section in config.sections():
         logging.info(f"Обработка секции: [{section}]")
-        try:
-            path = config.get(section, 'path')
-            permissions_str = config.get(section, 'permissions')
-
-            parsed_permissions = parse_permissions_string(permissions_str)
-            if parsed_permissions is None:
-                overall_success = False
-                continue
-
-            try:
-                os.chmod(path, parsed_permissions)
-                logging.info(f"Успешно применены права '{permissions_str}' к '{path}'")
-            except FileNotFoundError:
-                logging.error(f"Ошибка: Файл или папка не найдены по пути '{path}'. Права не применены.")
-                overall_success = False
-            except PermissionError:
-                logging.error(f"Ошибка доступа: Недостаточно прав для изменения прав '{path}'. Могут потребоваться права root.")
-                overall_success = False
-            except OSError as e:
-                logging.error(f"Ошибка ОС при изменении прав для '{path}': {e}")
-                overall_success = False
-        except configparser.NoOptionError as e:
-            logging.error(f"Ошибка конфигурации в секции '{section}': Отсутствует обязательный параметр '{e.option}'.")
-            overall_success = False
-        except Exception as e:
-            logging.error(f"Неожиданная ошибка при обработке секции '{section}': {e}")
+        if not process_config_section(section, config):
             overall_success = False
 
     return overall_success
 
 
 if __name__ == "__main__":
+    current_config_path = CONFIG_FILE_PATH
+
     if len(sys.argv) > 1:
-        CONFIG_FILE_PATH = sys.argv[1]
+        current_config_path = sys.argv[1]
     else:
-        logging.warning(f"Путь к конфигурационному файлу не указан. Используется путь по умолчанию: {CONFIG_FILE_PATH}")
+        logging.warning(f"Путь к конфигурационному файлу не указан. Используется путь по умолчанию: {current_config_path}")
 
     log_dir = os.path.dirname(LOG_FILE_PATH)
     if log_dir and not os.path.exists(log_dir):
@@ -95,7 +115,7 @@ if __name__ == "__main__":
             print(f"Критическая ошибка: Не удалось создать директорию для логов '{log_dir}': {e}", file=sys.stderr)
             sys.exit(1)
 
-    if apply_permissions_from_config(CONFIG_FILE_PATH):
+    if apply_permissions_from_config(current_config_path):
         logging.info("Скрипт завершил работу успешно.")
         sys.exit(0)
     else:
